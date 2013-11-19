@@ -1,0 +1,43 @@
+#apply_gate {
+  margin-bottom: 9px;
+}
+
+#R_input {
+  font-family: monospace;
+}
+
+#R_send {
+  vertical-align: top;
+}
+
+#dialog-minimized-fixed-container {
+  margin-right: 6px;
+  position: fixed; 
+  bottom: 1px; 
+  right: 1px; 
+  width: 65.81196581196582%;
+  z-index: 9999; 
+  height: 50px;
+}
+
+.ui-dialog-minimized {
+  margin-left: 10px;
+  margin-right: 10px;
+  left: initial;
+}
+
+.ui-dialog-minimized .ui-dialog-content {
+  height: 0;
+}
+
+.ui-dialog-minimized .ui-dialog-titlebar {
+  height: 30px;
+}
+
+.ui-dialog .ui-dialog-title {
+  width: auto;
+}
+
+.hidden {
+  display: none;
+}
