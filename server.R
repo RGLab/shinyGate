@@ -67,6 +67,17 @@ shinyServer( function(input, output, session) {
       parent <- input$parent_selection
       samples <- getSampleSelection()
       
+      ## only remove gates for samples that have gates at this node
+      missing_samples <- NULL
+      
+      for (sample in samples) {
+        if (!(parent %in% getNodes(gs[[sample]], isPath=TRUE))) {
+          missing_samples <- c(missing_samples, sample)
+        }
+      }
+      
+      samples <- samples[ !(samples %in% missing_samples) ]
+      
       pp <- getParent(gs[[samples[1]]], parent, isPath=TRUE)
       Rm(parent, gs[samples])
       
@@ -132,102 +143,106 @@ shinyServer( function(input, output, session) {
       selected_channel <- input$select_channels
       gate_both <- input$gate_positive_and_negative
       
-      fn <- get(gating_method, envir=asNamespace("openCyto"))
-      fnArgs <- formals(fn)
-      if (gating_method == "flowClust.2d") {
-        fnArgs <- fnArgs[5:length(fnArgs)]
-      } else {
-        fnArgs <- fnArgs[4:length(fnArgs)]
-      }
-      fnArgs <- fnArgs[ names(fnArgs) != "..." ]
-      args <- vector("list", length(fnArgs))
-      names(args) <- names(fnArgs)
-      for (i in seq_along(fnArgs)) {
-        tmp <- eval(parse(text=input[[paste(gating_method, names(fnArgs)[i], sep="_")]]))
-        if (is.null(tmp)) {
-          args[i] <- list(NULL)
+      tryCatch({
+        fn <- get(gating_method, envir=asNamespace("openCyto"))
+        fnArgs <- formals(fn)
+        if (gating_method == "flowClust.2d") {
+          fnArgs <- fnArgs[5:length(fnArgs)]
         } else {
-          args[[i]] <- tmp
+          fnArgs <- fnArgs[4:length(fnArgs)]
         }
-      }
-      
-      if (gating_method == "flowClust.1d" && is.null(args[["K"]])) {
-        warning("Changing 'K' from NULL to 2")
-        args[["K"]] <- 2
-      }
-      
-      ## the first three arguments are fixed and represent the flow frame,
-      ## the channel name, and the filterId, for the 1d gates
-      
-      if (gating_method == "flowClust.2d") {
-        args <- c('', '', '', '', args)
-        args[[2]] <- channel_1
-        args[[3]] <- channel_2
-        args[[4]] <- paste(gating_method, paste(channel_1, channel_2, sep=":"), sep="_")
-      } else {
-        args <- c('', '', '', args)
-        args[[2]] <- get(selected_channel)
-        args[[3]] <- paste(gating_method, get(selected_channel), sep="_")
-      }
-      
-      ## guess the gate name if not supplied
-      ## TODO: 2D gates?
-      if (gate_name == '' && gating_method != "flowClust.2d") {
-        if (args[["positive"]]) {
-          suffix <- "+"
-        } else {
-          suffix <- "-"
-        }
-        gate_name <- paste0( get(selected_channel), suffix)
-      }
-      
-      for (sample in samples) {
-        
-        args[[1]] <- quote(fs[[sample]])
-        
-        if (gate_both) {
-          
-          args[["positive"]] <- TRUE
-          gate <- do.call(fn, args)
-          flowWorkspace::add(gs[sample], gate, parent=parent, name=paste0( get(selected_channel), "+"))
-          
-          args[["positive"]] <- FALSE
-          gate <- do.call(fn, args)
-          flowWorkspace::add(gs[sample], gate, parent=parent, name=paste0( get(selected_channel), "-"))
-          
-        } else {
-          gate <- do.call(fn, args)
-          print(gate)
-          flowWorkspace::add(gs[sample], gate, parent=parent, name=gate_name)
+        fnArgs <- fnArgs[ names(fnArgs) != "..." ]
+        args <- vector("list", length(fnArgs))
+        names(args) <- names(fnArgs)
+        for (i in seq_along(fnArgs)) {
+          tmp <- eval(parse(text=input[[paste(gating_method, names(fnArgs)[i], sep="_")]]))
+          if (is.null(tmp)) {
+            args[i] <- list(NULL)
+          } else {
+            args[[i]] <- tmp
+          }
         }
         
-      }
-      
-      recompute(gs[samples])
-      
-      ## update inputs to reflect changes
-      allNodes <- unique( unlist( lapply(gs, function(x) {
-        getNodes(x, isPath=TRUE)
-      })))
-      
-      select <- grep( gate_name, allNodes, fixed=TRUE, value=TRUE )
-      updateSelectInput(session, "parent_selection", choices=allNodes, selected=select)
-      
-      ## update the template data.frame to reflect the new gate
-      gating_args <- args[4:length(args)]
-      template <<- rbind(template, data.frame(
-        alias=gate_name,
-        pop=gate_name,
-        parent=parent,
-        dims=channel_1,
-        gating_method=gating_method,
-        gating_args=paste( names(gating_args), gating_args, sep="=", collapse="," ),
-        collapseDataForGating='',
-        groupBy='',
-        preprocessing_method=if (grepl("flowClust", gating_method)) "prior_flowClust" else '',
-        preprocessing_args='',
-        samples=paste(samples, collapse=",")
-      ) )
+        if (gating_method == "flowClust.1d" && is.null(args[["K"]])) {
+          warning("Changing 'K' from NULL to 2")
+          args[["K"]] <- 2
+        }
+        
+        ## the first three arguments are fixed and represent the flow frame,
+        ## the channel name, and the filterId, for the 1d gates
+        
+        if (gating_method == "flowClust.2d") {
+          args <- c('', '', '', '', args)
+          args[[2]] <- channel_1
+          args[[3]] <- channel_2
+          args[[4]] <- paste(gating_method, paste(channel_1, channel_2, sep=":"), sep="_")
+        } else {
+          args <- c('', '', '', args)
+          args[[2]] <- get(selected_channel)
+          args[[3]] <- paste(gating_method, get(selected_channel), sep="_")
+        }
+        
+        ## guess the gate name if not supplied
+        ## TODO: 2D gates?
+        if (gate_name == '' && gating_method != "flowClust.2d") {
+          if (args[["positive"]]) {
+            suffix <- "+"
+          } else {
+            suffix <- "-"
+          }
+          gate_name <- paste0( get(selected_channel), suffix)
+        }
+        
+        for (sample in samples) {
+          
+          args[[1]] <- quote(fs[[sample]])
+          
+          if (gate_both) {
+            
+            args[["positive"]] <- TRUE
+            gate <- do.call(fn, args)
+            flowWorkspace::add(gs[sample], gate, parent=parent, name=paste0( get(selected_channel), "+"))
+            
+            args[["positive"]] <- FALSE
+            gate <- do.call(fn, args)
+            flowWorkspace::add(gs[sample], gate, parent=parent, name=paste0( get(selected_channel), "-"))
+            
+          } else {
+            gate <- do.call(fn, args)
+            print(gate)
+            flowWorkspace::add(gs[sample], gate, parent=parent, name=gate_name)
+          }
+          
+        }
+        
+        recompute(gs[samples])
+        
+        ## update inputs to reflect changes
+        allNodes <- unique( unlist( lapply(gs, function(x) {
+          getNodes(x, isPath=TRUE)
+        })))
+        
+        select <- grep( gate_name, allNodes, fixed=TRUE, value=TRUE )
+        updateSelectInput(session, "parent_selection", choices=allNodes, selected=select)
+        
+        ## update the template data.frame to reflect the new gate
+        gating_args <- args[4:length(args)]
+        template <<- rbind(template, data.frame(
+          alias=gate_name,
+          pop=gate_name,
+          parent=parent,
+          dims=channel_1,
+          gating_method=gating_method,
+          gating_args=paste( names(gating_args), gating_args, sep="=", collapse="," ),
+          collapseDataForGating='',
+          groupBy='',
+          preprocessing_method=if (grepl("flowClust", gating_method)) "prior_flowClust" else '',
+          preprocessing_args='',
+          samples=paste(samples, collapse=",")
+        ) )
+      }, error=function(e) {
+        cat("ERROR: Could not apply gate!")
+      })
         
     })
   })
