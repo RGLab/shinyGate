@@ -1,8 +1,19 @@
+#save_gs {
+  float: left;
+}
+
+label[for="autosave"] {
+  float: left;
+  margin-top: 6px;
+  margin-left: 10px;
+}
+
 #apply_gate {
   margin-bottom: 9px;
 }
 
 #R_input {
+  width: 60%;
   font-family: monospace;
 }
 

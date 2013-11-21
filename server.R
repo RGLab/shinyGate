@@ -32,6 +32,7 @@ shinyServer( function(input, output, session) {
   GS <- gs <- NULL
   FS <- fs <- NULL
   template <- NULL
+  last_channel_index <- 1L
   
   ## Utility Functions
   getSampleSelection <- reactive({
@@ -105,6 +106,14 @@ shinyServer( function(input, output, session) {
       allNodes <- unique( unlist( lapply(gs, function(x) getNodes(x, isPath=TRUE) ) ) )
       updateSelectInput(session, "parent_selection", choices=allNodes, selected=pp)
       
+      ## auto-save
+      isolate({
+        if (input$autosave) {
+          save_gs(gs, input$data_selection, overwrite=TRUE)
+        }
+      })
+      
+      
     })
     
   })
@@ -127,6 +136,40 @@ shinyServer( function(input, output, session) {
     updateSelectInput(session, "sample_selection", choices=sort(sampleNames(gs)))
   })
   
+  observe({
+    
+    selected_channel <- input$select_channels
+    isolate({
+      channel_1 <- input$channel_1
+      if (selected_channel == "channel_1") {
+        last_channel_index <<- 1L
+      } else if (selected_channel == "channel_2") {
+        last_channel_index <<- 2L
+      }
+    })
+    
+    
+  })
+  
+  ## An observer for giving nice names to the radio selection.
+  observe({
+    
+    channel_1 <- input$channel_1
+    channel_2 <- input$channel_2
+    
+    isolate({
+      selected_channel <- input$select_channels
+      l <- setNames( list("channel_1", "channel_2"), c(channel_1, channel_2) )
+      updateRadioButtons(session, 
+        "select_channels", 
+        "Select Channels to be used in Gating", 
+        l,
+        names(l)[[last_channel_index]]
+      )
+    })
+    
+  })
+  
   ## An observer for the button that applies a gate.
   observe({
     debug("Trying to apply gate.")
@@ -138,12 +181,25 @@ shinyServer( function(input, output, session) {
       channel_2 <- input$channel_2
       parent <- input$parent_selection
       gating_method <- input$gating_method
-      gate_name <- input$gate_name
+      gate_alias <- input$gate_alias
       samples <- getSampleSelection()
       selected_channel <- input$select_channels
       gate_both <- input$gate_positive_and_negative
       
+      ## only remove gates for samples that have gates at this node
+      missing_samples <- NULL
+      
+      for (sample in samples) {
+        if (!(parent %in% getNodes(gs[[sample]], isPath=TRUE))) {
+          missing_samples <- c(missing_samples, sample)
+        }
+      }
+      
+      samples <- samples[ !(samples %in% missing_samples) ]
+      
+      
       tryCatch({
+        
         fn <- get(gating_method, envir=asNamespace("openCyto"))
         fnArgs <- formals(fn)
         if (gating_method == "flowClust.2d") {
@@ -184,13 +240,15 @@ shinyServer( function(input, output, session) {
         
         ## guess the gate name if not supplied
         ## TODO: 2D gates?
-        if (gate_name == '' && gating_method != "flowClust.2d") {
+        if (gate_alias == '' && gating_method != "flowClust.2d") {
           if (args[["positive"]]) {
             suffix <- "+"
           } else {
             suffix <- "-"
           }
-          gate_name <- paste0( get(selected_channel), suffix)
+          gate_alias <- paste0( get(selected_channel), suffix)
+        } else if (gate_alias == '' && gating_method == "flowClust.2d") {
+          gate_alias <- paste(channel_1, channel_2, sep=":")
         }
         
         for (sample in samples) {
@@ -210,7 +268,7 @@ shinyServer( function(input, output, session) {
           } else {
             gate <- do.call(fn, args)
             print(gate)
-            flowWorkspace::add(gs[sample], gate, parent=parent, name=gate_name)
+            flowWorkspace::add(gs[sample], gate, parent=parent, name=gate_alias)
           }
           
         }
@@ -222,14 +280,14 @@ shinyServer( function(input, output, session) {
           getNodes(x, isPath=TRUE)
         })))
         
-        select <- grep( gate_name, allNodes, fixed=TRUE, value=TRUE )
+        select <- grep( gate_alias, allNodes, fixed=TRUE, value=TRUE )
         updateSelectInput(session, "parent_selection", choices=allNodes, selected=select)
         
         ## update the template data.frame to reflect the new gate
         gating_args <- args[4:length(args)]
         template <<- rbind(template, data.frame(
-          alias=gate_name,
-          pop=gate_name,
+          alias=gate_alias,
+          pop=gate_alias,
           parent=parent,
           dims=channel_1,
           gating_method=gating_method,
@@ -240,8 +298,17 @@ shinyServer( function(input, output, session) {
           preprocessing_args='',
           samples=paste(samples, collapse=",")
         ) )
+        
+        isolate({
+          if (input$autosave) {
+            save_gs(gs, input$data_selection, overwrite=TRUE)
+          }
+        })
+        
       }, error=function(e) {
-        cat("ERROR: Could not apply gate!")
+        cat("ERROR: Could not apply gate!\n")
+        cat("Message:\n--------\n\n")
+        print(e)
       })
         
     })

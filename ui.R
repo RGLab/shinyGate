@@ -37,12 +37,14 @@ shinyUI( pageWithSidebar(
         )
       )
     ),
-    textInput("gate_name", label="Gate Name", value=''),
+    textInput("gate_alias", label="Gate Alias", value=''),
     actionButton("apply_gate", "Apply Gate"),
     br(),
     br(),
-    downloadButton("save_gs", "Save GatingSet"),
-    downloadButton("save_template", "Save GatingTemplate")
+    tags$div( style="overflow: auto;",
+      downloadButton("save_gs", "Save GatingSet"),
+      checkboxInput("autosave", "Autosave?", TRUE)
+    )
   ),
   
   mainPanel(
