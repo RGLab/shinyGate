@@ -12,7 +12,7 @@ shinyUI( pageWithSidebar(
     uiOutput("sample_controls"),
     uiOutput("apply_controls"),
     
-    selectInput("data_selection", choices=data, label='Select Data'),
+    selectInput("data_selection", choices=data, label='Select Data', selected="gs/LoveLab"),
     selectInput("sample_selection", choices='', label='Select Samples to Work With', multiple=TRUE),
     actionButton("select_all_samples", label="Select All Samples"),
     selectInput("parent_selection", choices="root", label='Select Parent Population'),
@@ -50,12 +50,16 @@ shinyUI( pageWithSidebar(
   mainPanel(
     tabsetPanel(
       tabPanel("1D Density Plots",
-        numericInput("1d_densityplot_n", "Maximum Number of Cells to Plot", value=1000),
+        numericInput("1d_densityplot_n", "Maximum Number of Cells to Plot", value=10000),
         plotOutput("1d_densityplot"),
         htmlOutput("1d_densityplot_diag")
       ),
       tabPanel("2D Density Plots",
-        numericInput("2d_densityplot_n", "Maximum Number of Cells to Plot", value=1000),
+        tags$div( style="overflow: auto;",
+          selectInput("2d_overlay", "Overlay", ""),
+          numericInput("2d_densityplot_n", "Maximum Number of Cells to Plot", value=10000)
+          
+        ),
         plotOutput("2d_densityplot"),
         htmlOutput("2d_densityplot_diag")
         
@@ -67,9 +71,6 @@ shinyUI( pageWithSidebar(
       ),
       tabPanel("Gating Hierarchy",
         plotOutput("gating_hierarchy")
-      ),
-      tabPanel("Template",
-        tableOutput("template")
       ),
       tabPanel("Debug",
         tags$div(

@@ -11,7 +11,7 @@ library(data.table.extras)
 if (FALSE) {
   channel_1 <- "Live"
   channel_2 <- "Dead"
-  GS <- gs <- load_gs("gs/LoveLab-Gated")
+  GS <- gs <- load_gs("gs/LoveLab")
   FS <- fs <- getData(gs)
 }
 
@@ -29,6 +29,10 @@ file.ext <- function(x) {
 
 shinyServer( function(input, output, session) {
   
+  source("common_functions.R")
+  sapply( list.files("gating_wrappers", full.names=TRUE), source )
+  
+  ## Globals
   GS <- gs <- NULL
   FS <- fs <- NULL
   template <- NULL
@@ -82,26 +86,6 @@ shinyServer( function(input, output, session) {
       pp <- getParent(gs[[samples[1]]], parent, isPath=TRUE)
       Rm(parent, gs[samples])
       
-      ## remove the node from the template
-      
-      ## algorithm
-      ## check the template and get all entries that have 'sample'
-      ## as an entry in the samples column. if the parent is equal to 'parent',
-      ## remove sample from that entry.
-      ## at the end, if the sample column is empty, delete it
-      template_samples <- strsplit( as.character(template$samples), ",")
-      for (sample in samples) {
-        for (i in 1:nrow(template)) {
-          if (template$parent[i] == pp && sample %in% template_samples[[i]]) {
-            template_samples[[i]] <- template_samples[[i]][ template_samples[[i]] != sample ]
-          }
-        }
-      }
-      template$samples <- sapply(template_samples, function(x) {
-        paste(x, collapse=",")
-      })
-      template <<- template[ template$samples != '', ]
-      
       ## update the parent selection
       allNodes <- unique( unlist( lapply(gs, function(x) getNodes(x, isPath=TRUE) ) ) )
       updateSelectInput(session, "parent_selection", choices=allNodes, selected=pp)
@@ -113,27 +97,29 @@ shinyServer( function(input, output, session) {
         }
       })
       
+      ## update 2d overlay selections
+      updateSelectInput(session, "2d_overlay", "Overlay", allNodes, "root")
       
     })
     
   })
   
+  ## An observer for switching to different gs
   observe({
     debug("Trying to read and update select inputs.")
     file <- input$data_selection
     GS <<- gs <<- load_gs(file)
     FS <<- fs <<- getData(gs)
-    template <<- vector("list", 11)
-    names(template) <<- c("alias", "pop", "parent", "dims", "gating_method", 
-      "gating_args", "collapseDataForGating", "groupBy", "preprocessing_method", 
-      "preprocessing_args", "samples")
-    template <<- as.data.frame(template)
     channels <- sort(getData(gs)@colnames)
     nodes <- getNodes(gs[[1]], isPath=TRUE)
     updateSelectInput(session, "parent_selection", choices=nodes)
     updateSelectInput(session, "channel_1", choices=channels)
     updateSelectInput(session, "channel_2", choices=channels)
     updateSelectInput(session, "sample_selection", choices=sort(sampleNames(gs)))
+    allNodes <- unique( unlist( lapply(gs, function(x) {
+      getNodes(x, isPath=TRUE)
+    })))
+    updateSelectInput(session, "2d_overlay", "Overlay", allNodes, "root")
   })
   
   observe({
@@ -177,6 +163,7 @@ shinyServer( function(input, output, session) {
       return(NULL)
     
     isolate({
+      
       channel_1 <- input$channel_1
       channel_2 <- input$channel_2
       parent <- input$parent_selection
@@ -196,82 +183,43 @@ shinyServer( function(input, output, session) {
       }
       
       samples <- samples[ !(samples %in% missing_samples) ]
+      fn <- get(gating_method, envir=asNamespace("openCyto"))
+      fnArgs <- formals(fn)
+      if (gating_method == "flowClust.2d") {
+        fnArgs <- fnArgs[5:length(fnArgs)]
+      } else {
+        fnArgs <- fnArgs[4:length(fnArgs)]
+      }
+      fnArgs <- fnArgs[ names(fnArgs) != "..." ]
+      args <- vector("list", length(fnArgs))
+      names(args) <- names(fnArgs)
+      for (i in seq_along(fnArgs)) {
+        txt <- input[[paste(gating_method, names(fnArgs)[i], sep="_")]]
+        tmp <- eval(parse(text=txt))
+        if (is.null(tmp)) {
+          args[i] <- list(NULL)
+        } else {
+          args[[i]] <- tmp
+        }
+      }
       
+      env <- environment()
+      env$gs <- gs
+      env$fs <- fs
       
       tryCatch({
         
-        fn <- get(gating_method, envir=asNamespace("openCyto"))
-        fnArgs <- formals(fn)
-        if (gating_method == "flowClust.2d") {
-          fnArgs <- fnArgs[5:length(fnArgs)]
-        } else {
-          fnArgs <- fnArgs[4:length(fnArgs)]
-        }
-        fnArgs <- fnArgs[ names(fnArgs) != "..." ]
-        args <- vector("list", length(fnArgs))
-        names(args) <- names(fnArgs)
-        for (i in seq_along(fnArgs)) {
-          tmp <- eval(parse(text=input[[paste(gating_method, names(fnArgs)[i], sep="_")]]))
-          if (is.null(tmp)) {
-            args[i] <- list(NULL)
-          } else {
-            args[[i]] <- tmp
-          }
-        }
+        ## shiny likes to do terrible things to the execution stack,
+        ## so we force these functions to evaluate in a given environment
+        switch(gating_method,
+          mindensity=do_mindensity(env),
+          cytokine=do_cytokine(env),
+          flowClust.1d=do_flowClust.1d(env),
+          flowClust.2d=do_flowClust.2d(env),
+          return("Could not select a gating method!")
+        )
         
-        if (gating_method == "flowClust.1d" && is.null(args[["K"]])) {
-          warning("Changing 'K' from NULL to 2")
-          args[["K"]] <- 2
-        }
-        
-        ## the first three arguments are fixed and represent the flow frame,
-        ## the channel name, and the filterId, for the 1d gates
-        
-        if (gating_method == "flowClust.2d") {
-          args <- c('', '', '', '', args)
-          args[[2]] <- channel_1
-          args[[3]] <- channel_2
-          args[[4]] <- paste(gating_method, paste(channel_1, channel_2, sep=":"), sep="_")
-        } else {
-          args <- c('', '', '', args)
-          args[[2]] <- get(selected_channel)
-          args[[3]] <- paste(gating_method, get(selected_channel), sep="_")
-        }
-        
-        ## guess the gate name if not supplied
-        ## TODO: 2D gates?
-        if (gate_alias == '' && gating_method != "flowClust.2d") {
-          if (args[["positive"]]) {
-            suffix <- "+"
-          } else {
-            suffix <- "-"
-          }
-          gate_alias <- paste0( get(selected_channel), suffix)
-        } else if (gate_alias == '' && gating_method == "flowClust.2d") {
-          gate_alias <- paste(channel_1, channel_2, sep=":")
-        }
-        
-        for (sample in samples) {
-          
-          args[[1]] <- quote(fs[[sample]])
-          
-          if (gate_both) {
-            
-            args[["positive"]] <- TRUE
-            gate <- do.call(fn, args)
-            flowWorkspace::add(gs[sample], gate, parent=parent, name=paste0( get(selected_channel), "+"))
-            
-            args[["positive"]] <- FALSE
-            gate <- do.call(fn, args)
-            flowWorkspace::add(gs[sample], gate, parent=parent, name=paste0( get(selected_channel), "-"))
-            
-          } else {
-            gate <- do.call(fn, args)
-            print(gate)
-            flowWorkspace::add(gs[sample], gate, parent=parent, name=gate_alias)
-          }
-          
-        }
+        rm(env)
         
         recompute(gs[samples])
         
@@ -283,27 +231,15 @@ shinyServer( function(input, output, session) {
         select <- grep( gate_alias, allNodes, fixed=TRUE, value=TRUE )
         updateSelectInput(session, "parent_selection", choices=allNodes, selected=select)
         
-        ## update the template data.frame to reflect the new gate
-        gating_args <- args[4:length(args)]
-        template <<- rbind(template, data.frame(
-          alias=gate_alias,
-          pop=gate_alias,
-          parent=parent,
-          dims=channel_1,
-          gating_method=gating_method,
-          gating_args=paste( names(gating_args), gating_args, sep="=", collapse="," ),
-          collapseDataForGating='',
-          groupBy='',
-          preprocessing_method=if (grepl("flowClust", gating_method)) "prior_flowClust" else '',
-          preprocessing_args='',
-          samples=paste(samples, collapse=",")
-        ) )
-        
+        ## autosave?
         isolate({
           if (input$autosave) {
             save_gs(gs, input$data_selection, overwrite=TRUE)
           }
         })
+        
+        ## update the gates in the 2d gate select input
+        updateSelectInput(session, "2d_overlay", "Overlay", allNodes, "root")
         
       }, error=function(e) {
         cat("ERROR: Could not apply gate!\n")
@@ -313,13 +249,6 @@ shinyServer( function(input, output, session) {
         
     })
   })
-  
-  output$save_template <- downloadHandler(
-    filename="GatingTemplate.csv",
-    content=function(file) {
-      write.table(file, row.names=FALSE, col.names=TRUE, sep=";", quote=FALSE)
-    }
-  )
   
   ## A GatingSet save observer
   output$save_gs <- downloadHandler(
@@ -341,11 +270,13 @@ shinyServer( function(input, output, session) {
     channel_1 <- input$channel_1
     channel_2 <- input$channel_2
     parent <- input$parent_selection
+    overlay <- input[["2d_overlay"]]
     samples <- getSampleSelection()
+    n <- input[["2d_densityplot_n"]]
     
-    ## only take the samples that have 'parent' as a node
+    ## only take the samples that have 'overlay' as a node
     keep <- unlist( lapply( gs[samples], function(x) {
-      return( parent %in% getNodes(x, isPath=TRUE) )
+      return( overlay %in% getNodes(x, isPath=TRUE) )
     } ) )
     
     samples <- samples[keep]
@@ -354,8 +285,43 @@ shinyServer( function(input, output, session) {
       return( invisible(NULL) )
     }
     
-    fs <- getData(gs[samples], parent)
-    print( flowViz::xyplot( as.formula( paste(channel_2, "~", channel_1) ), fs ) )
+    #fs <- getData(gs[samples], parent)
+    fs <- flowSet( lapply(gs[samples], function(x) {
+      getData(x, parent)
+    }))
+    
+    ## filter for faster plotting
+    for (i in 1:length(fs)) {
+      m <- nrow( fs[[i]] )
+      if (m > n) {
+        fs[[i]] <- fs[[i]][1:n, ]
+      }
+    }
+    
+    if (overlay != "root") {
+      
+      overlay_gate <- flowSet( lapply(gs[samples], function(x) {
+        getData(x, overlay)
+      }))
+      
+      print( flowViz::xyplot( as.formula( paste(channel_2, "~", channel_1) ), 
+        fs, 
+        smooth=FALSE,
+        stats=TRUE,
+        margin=TRUE,
+        xbin=32,
+        overlay=overlay_gate
+      ) )
+    } else {
+      print( flowViz::xyplot( as.formula( paste(channel_2, "~", channel_1) ), 
+        fs, 
+        smooth=FALSE,
+        stats=TRUE,
+        margin=TRUE,
+        xbin=32
+      ) )
+    }
+    
     
   })
   
@@ -401,7 +367,10 @@ shinyServer( function(input, output, session) {
       return( invisible(NULL) )
     }
     
-    fs <- getData(gs[samples], parent)
+    #fs <- getData(gs[samples], parent)
+    fs <- flowSet( lapply( gs[samples], function(x) {
+      getData(x, parent)
+    }))
     
     ## subset for faster plotting
     fs <- fsApply(fs, function(x) {
@@ -445,14 +414,22 @@ shinyServer( function(input, output, session) {
   output$gate_plot <- renderPlot({
     samples <- getSampleSelection()
     parent <- input$parent_selection
+    
     for (sample in samples) {
       if (!(parent %in% getNodes(gs[[sample]], isPath=TRUE))) {
         samples <- samples[ samples != sample ]
       }
     }
     
+    ## should we plot a density plot?
+    if (inherits( getGate( gs[[ samples[1] ]], parent ), "rectangleGate" )) {
+      type <- "densityplot"
+    } else {
+      type <- "xyplot"
+    }
+    
     if (length(samples)) {
-      print( plotGate(gs[samples], parent, type="density") )
+      print( plotGate(gs[samples], parent, type=type) )
     }
     
     return( invisible(NULL) )
@@ -526,13 +503,6 @@ shinyServer( function(input, output, session) {
       return(result)
     })
     
-  })
-  
-  output$template <- renderTable({
-    apply_gate <- input$apply_gate
-    remove_gate <- input$remove_gate
-    
-    template
   })
   
   output$gating_hierarchy <- renderPlot({
