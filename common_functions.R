@@ -4,18 +4,20 @@ consistency <- function(gs) {
   union <- Reduce(union, allNodes)
   node <- setdiff(union, intersection)
   if (length(node)) {
-    parent <- getParent(gs[[1]], node, isPath=TRUE)
-    samples <- names(allNodes)[unlist(lapply(allNodes, function(x) {
+    bad_samples <- names(allNodes)[unlist(lapply(allNodes, function(x) {
       !(node %in% x)
     }))]
+    good_samples <- setdiff( names(allNodes), bad_samples )
+    parent <- getParent(gs[[good_samples[1]]], node, isPath=TRUE)
+    
   } else {
-    samples <- parent <- character()
+    bad_samples <- parent <- character()
   }
   
   return (list(
     is_consistent=identical(intersection, union),
     node=node,
     parent=parent,
-    samples=samples
+    samples=bad_samples
   ))
 }
