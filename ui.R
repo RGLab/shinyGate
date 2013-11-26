@@ -56,9 +56,12 @@ shinyUI( pageWithSidebar(
       ),
       tabPanel("2D Density Plots",
         tags$div( style="overflow: auto;",
-          selectInput("2d_overlay", "Overlay", ""),
-          numericInput("2d_densityplot_n", "Maximum Number of Cells to Plot", value=10000)
-          
+          tags$div( style="float: left; width: 50%;",
+            selectInput("2d_overlay", "Overlay", "")
+          ),
+          tags$div(style="float: right; width:50%;",
+            numericInput("2d_densityplot_n", "Maximum Number of Cells to Plot", value=10000)
+          )
         ),
         plotOutput("2d_densityplot"),
         htmlOutput("2d_densityplot_diag")

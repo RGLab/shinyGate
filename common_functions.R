@@ -1,26 +1,21 @@
-is_consistent <- function(gs) {
-  allNodes <- lapply(gs, function(x) getNodes(x))
-  if (!identical(
-    Reduce(intersect, allNodes),
-    Reduce(union, allNodes)
-  )) {
-    return (FALSE)
-  } else {
-    return (TRUE)
-  }
-}
-
-## should only be one, if we are doing our job ...
-inconsistent_node <- function(gs) {
-  allNodes <- lapply(gs, function(x) getNodes(x))
+consistency <- function(gs) {
+  allNodes <- lapply(gs, getNodes)
   intersection <- Reduce(intersect, allNodes)
   union <- Reduce(union, allNodes)
-  diff <- setdiff(union, intersection)
-  return (diff)
-}
-
-is_missing_node <- function(gs, node) {
-  unlist(lapply(gs, function(x) {
-    !(node %in% getNodes(x))
-  }))
+  node <- setdiff(union, intersection)
+  if (length(node)) {
+    parent <- getParent(gs[[1]], node, isPath=TRUE)
+    samples <- names(allNodes)[unlist(lapply(allNodes, function(x) {
+      !(node %in% x)
+    }))]
+  } else {
+    samples <- parent <- character()
+  }
+  
+  return (list(
+    is_consistent=identical(intersection, union),
+    node=node,
+    parent=parent,
+    samples=samples
+  ))
 }

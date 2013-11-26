@@ -157,6 +157,7 @@ shinyServer( function(input, output, session) {
   })
   
   ## An observer for the button that applies a gate.
+  ## add_gate
   observe({
     debug("Trying to apply gate.")
     if (input$apply_gate == 0) 
@@ -200,6 +201,48 @@ shinyServer( function(input, output, session) {
           args[i] <- list(NULL)
         } else {
           args[[i]] <- tmp
+        }
+      }
+      
+      ## guessing the gate alias when it's unspecified
+      if (gating_method != "flowClust.2d") {
+        if (gate_alias == '') {
+          if (args[["positive"]]) {
+            suffix <- "+"
+          } else {
+            suffix <- "-"
+          }
+          gate_alias <- paste0( get(selected_channel), suffix)
+        }
+      } else {
+        if (gate_alias == '') {
+          gate_alias <- paste(channel_1, channel_2, sep=":")
+        }
+      }
+      
+      ## checking for consistency -- we only proceed
+      ## if either the gs is in a consistent state, or
+      ## the gate add will help 'cure' inconsistency
+      state <- consistency(gs)
+      if (!state$is_consistent) {
+        doError <- FALSE
+        if (state$parent != parent) {
+          doError <- TRUE
+        }
+        if (state$node != gate_alias) {
+          doError <- TRUE
+        }
+        if (!(any(samples %in% state$samples))) {
+          doError <- TRUE
+        }
+        if (doError) {
+          message("ERROR: Cannot apply gate! Your GatingSet is in an ",
+            "inconsistent state, so you can only add gates with parent '",
+            state$parent, "' and alias '", state$node, "', for samples '",
+            paste(state$samples, collapse=", "), "'.")
+          message("You supplied:\nParent: ", parent, "\nAlias: ", gate_alias,
+            "\nSample(s): ", paste(samples, collapse=", "))
+          return (invisible(NULL))
         }
       }
       
